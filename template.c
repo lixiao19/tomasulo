@@ -190,7 +190,7 @@ void printState(machineState *statePtr, int memorySize)
   }
 
   /*
-   * [TODO]如果你实现了动态分支预测, 将这里的注释取消
+   * [TOD]如果你实现了动态分支预测, 将这里的注释取消
    */
 
   /*printf("\t Branch target buffer:\n");
@@ -216,14 +216,14 @@ void printState(machineState *statePtr, int memorySize)
 }
 
 /*
- *[TODO]
+ *[]
  *这里对指令进行解码，转换成程序可以识别的格式，需要根据指令格式来进行。
  *可以考虑使用高级语言中的位和逻辑运算
  */
 int field0(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回指令的第一个寄存器RS1
    */
   return (instruction >> 21) & 0x1f;
@@ -232,7 +232,7 @@ int field0(int instruction)
 int field1(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回指令的第二个寄存器，RS2或者Rd
    */
   return (instruction >> 16) & 0x1f; 
@@ -241,7 +241,7 @@ int field1(int instruction)
 int field2(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回指令的第三个寄存器，Rd
    */
     return (instruction >> 11) & 0x1f; 
@@ -250,7 +250,7 @@ int field2(int instruction)
 int immediate(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回I型指令的立即数部分
    */
   return instruction & 0xffff;
@@ -259,7 +259,7 @@ int immediate(int instruction)
 int jumpAddr(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回J型指令的跳转地址
    */
   return instruction & 0x3ffffff; 
@@ -268,7 +268,7 @@ int jumpAddr(int instruction)
 int opcode(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回指令的操作码
    */
   return (instruction >> 26) & 0x3f;
@@ -277,7 +277,7 @@ int opcode(int instruction)
 int func(int instruction)
 {
   /*
-   *[TODO]
+   *[]
    *返回R型指令的功能域
    */
   return instruction & 0x7ff;
@@ -364,6 +364,7 @@ void printInstruction(int instr)
   }
 }
 
+//立即数指令使用
 int convertNum16(int num)
 {
   /* convert an 16 bit number into a 32-bit or 64-bit number */
@@ -374,6 +375,7 @@ int convertNum16(int num)
   return (num);
 }
 
+//跳转指令使用
 int convertNum26(int num)
 {
   /* convert an 26 bit number into a 32-bit or 64-bit number */
@@ -449,7 +451,7 @@ int getResult(resStation rStation, machineState *statePtr)
 int getPrediction(machineState *statePtr)
 {
   /*
-   * [TODO]
+   * [TOD]
    * 对给定的PC, 检查分支预测缓冲栈中是否有历史记录
    * 如果有, 返回根据历史信息进行的预测, 否则返回-1
    */
@@ -459,7 +461,7 @@ int getPrediction(machineState *statePtr)
 void updateBTB(machineState *statePtr, int branchPC, int targetPC, int outcome)
 {
   /*
-   * [TODO]
+   * [TOD]
    * 更新分支预测缓冲栈: 检查是否与缓冲栈中的项目匹配.
    * 如果是, 对2-bit的历史记录进行更新;
    * 如果不是, 将当前的分支语句添加到缓冲栈中去.
@@ -473,7 +475,7 @@ void updateBTB(machineState *statePtr, int branchPC, int targetPC, int outcome)
 int getTarget(machineState *statePtr, int reorderNum)
 {
   /*
-   * [TODO]
+   * [TOD]
    * 检查分支指令是否已保存在分支预测缓冲栈中:
    * 如果不是, 返回当前pc+1, 这意味着我们预测分支跳转不会成功;
    * 如果在, 并且历史信息为STRONGTAKEN或WEAKTAKEN, 返回跳转的目标地址,
@@ -605,7 +607,7 @@ main(int argc, char *argv[])
      */
 
     /*
-     * [TODO]
+     * [TOD]
      * 选作内容:
      * 在提交的时候, 我们知道跳转指令的最终结果.
      * 有三种可能的情况: 预测跳转成功, 预测跳转不成功, 不能预测(因为分支预测缓冲栈中没有对应的项目).
@@ -655,7 +657,7 @@ main(int argc, char *argv[])
      */
 
     /*
-     * [TODO]
+     * [TOD]
      * 选作内容:
      * 在发射跳转指令时, 将PC修改为正确的目标: 是pc = pc+1, 还是pc = 跳转目标?
      * 在发射其他的指令时, 只需要设置pc = pc+1.
