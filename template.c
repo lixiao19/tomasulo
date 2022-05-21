@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define MAXLINELENGTH 1000 /* 机器指令的最大长度 */
 #define MEMSIZE 10000      /* 内存的最大容量     */
@@ -171,7 +172,8 @@ void printState(machineState *statePtr, int memorySize)
       printf("\t \t Reorder buffer %d: ", i);
       printf("instr %d  executionUnit '%s'  state %s  valid %d  result %d storeAddress %d\n",
              statePtr->reorderBuf[i].instr,
-             unitname[statePtr->reorderBuf[i].instr, statePtr->reorderBuf[i].execUnit - 1],
+            //  unitname[statePtr->reorderBuf[i].instr, statePtr->reorderBuf[i].execUnit - 1],
+             unitname[statePtr->reorderBuf[i].execUnit],
              statename[statePtr->reorderBuf[i].instrStatus],
              statePtr->reorderBuf[i].valid, statePtr->reorderBuf[i].result,
              statePtr->reorderBuf[i].storeAddress);
@@ -215,6 +217,29 @@ void printState(machineState *statePtr, int memorySize)
   }
 }
 
+//立即数指令使用
+int convertNum16(int num)
+{
+  /* convert an 16 bit number into a 32-bit or 64-bit number */
+  if (num & 0x8000)
+  {
+    num -= 65536;
+  }
+  return (num);
+}
+
+//跳转指令使用
+int convertNum26(int num)
+{
+  /* convert an 26 bit number into a 32-bit or 64-bit number */
+  if (num & 0x200000)
+  {
+    num -= 67108864;
+  }
+  return (num);
+}
+
+
 /*
  *[]
  *这里对指令进行解码，转换成程序可以识别的格式，需要根据指令格式来进行。
@@ -253,7 +278,7 @@ int immediate(int instruction)
    *[]
    *返回I型指令的立即数部分
    */
-  return instruction & 0xffff;
+  return convertNum16(instruction & 0xffff);
 }
 
 int jumpAddr(int instruction)
@@ -262,7 +287,7 @@ int jumpAddr(int instruction)
    *[]
    *返回J型指令的跳转地址
    */
-  return instruction & 0x3ffffff; 
+  return convertNum26(instruction & 0x3ffffff); 
 }
 
 int opcode(int instruction)
@@ -364,63 +389,189 @@ void printInstruction(int instr)
   }
 }
 
-//立即数指令使用
-int convertNum16(int num)
-{
-  /* convert an 16 bit number into a 32-bit or 64-bit number */
-  if (num & 0x8000)
-  {
-    num -= 65536;
-  }
-  return (num);
-}
-
-//跳转指令使用
-int convertNum26(int num)
-{
-  /* convert an 26 bit number into a 32-bit or 64-bit number */
-  if (num & 0x200000)
-  {
-    num -= 67108864;
-  }
-  return (num);
-}
 
 void updateRes(int unit, machineState *statePtr, int value)
 {
   /*
-   *[TODO]
+   *[]
    * 更新保留栈:
    * 将位于公共数据总线上的数据
    * 复制到正在等待它的其他保留栈中去
    */
+  for(int i = 0; i < NUMUNITS; i++){
+    resStation *sta = &statePtr->reservation[i];  
+    if(sta->busy){
+      if(sta->Qj == unit){
+        sta->Vj = value;
+        sta->Qj = 0;
+      }
+      if(sta->Qk == unit){
+        sta->Vk = value;
+        sta->Qk = 0;
+      }
+    }
+  }
+}
+
+void fixVj(resStation* sta, machineState *statePtr, int Rj){
+  if(statePtr->regResult[Rj].valid){
+    sta->Vj = statePtr->regFile[Rj];
+    sta->Qj = 0;
+  }else{
+    int rob_id = statePtr->regResult[Rj].reorderNum;
+    if(statePtr->reorderBuf[rob_id].valid){//????是这个判断条件吗
+      sta->Vj = statePtr->reorderBuf[rob_id].result;
+      sta->Qj = 0;
+    }else{
+      sta->Qj = statePtr->reorderBuf[rob_id].execUnit;
+    }
+  }
+}
+
+void fixVk(resStation* sta, machineState *statePtr, int Rk){
+  if(statePtr->regResult[Rk].valid){
+      sta->Vk = statePtr->regFile[Rk];
+      sta->Qk = 0;
+    }else{
+      int rob_id = statePtr->regResult[Rk].reorderNum;
+      if(statePtr->reorderBuf[rob_id].valid){//????是这个判断条件吗
+        sta->Vk = statePtr->reorderBuf[rob_id].result;
+        sta->Qk = 0;
+      }else{
+        sta->Qk = statePtr->reorderBuf[rob_id].execUnit;
+      }
+    }
 }
 
 void issueInstr(int instr, int unit, machineState *statePtr, int reorderNum)
 {
-
   /*
-   * [TODO]
+   * []
    * 发射指令:
    * 填写保留栈和ROB项的内容.
    * 注意, 要在所有的字段中写入正确的值.
    * 检查寄存器状态, 相应的在Vj,Vk和Qj,Qk字段中设置正确的值:
-   * 对于I类型指令, 设置Qk=0,Vk=0;
-   * 对于sw指令, 如果寄存器有效, 将寄存器中的内存基地址保存在Vj中;
+   * 对于I类型指令, 设置Qk=0,Vk=0; ///????Vk
+   * 对于sw指令, 如果寄存器有效, 将寄存器中的内存基地址保存在Vj中; ///???这么写，没理解
    * 对于beqz和j指令, 将当前PC+1的值保存在Vk字段中.
    * 如果指令在提交时会修改寄存器的值, 还需要在这里更新寄存器状态数据结构.
    */
+  reorderEntry* rob = &statePtr->reorderBuf[reorderNum];
+  rob->busy = 1;
+  rob->instr = instr;
+  rob->execUnit = unit;
+  rob->instrStatus = ISSUING;
+  rob->valid = 0;
+
+  resStation* sta = &statePtr->reservation[unit];
+  sta->instr = instr;
+  sta->busy = 1;
+  int Rj, Rk, Rd;
+  if (opcode(instr) == regRegALU)
+  {
+    sta->exTimeLeft = INTEXEC;
+    sta->reorderNum = reorderNum;
+    Rj = field0(instr);
+    Rk = field1(instr);
+    fixVj(sta, statePtr, Rj);
+    fixVk(sta, statePtr, Rk);
+
+    Rd = field2(instr);
+    statePtr->regResult[Rd].valid = 0;
+    statePtr->regResult[Rd].reorderNum = reorderNum;
+  }
+  else if (opcode(instr) == ADDI || opcode(instr) == ANDI)
+  {
+    sta->exTimeLeft = INTEXEC;
+    sta->reorderNum = reorderNum;
+    Rj = field0(instr);
+    fixVj(sta, statePtr, Rj);
+    sta->Vk = 0;
+    sta->Qk = 0;
+
+    Rd = field1(instr);
+    statePtr->regResult[Rd].valid = 0;
+    statePtr->regResult[Rd].reorderNum = reorderNum;
+  }
+  else if (opcode(instr) == LW)
+  {
+    sta->exTimeLeft = LDEXEC;
+    sta->reorderNum = reorderNum;
+    Rj = field0(instr);
+    fixVj(sta, statePtr, Rj);
+    sta->Vk = 0;
+    sta->Qk = 0;
+
+    Rd = field1(instr);
+    statePtr->regResult[Rd].valid = 0;
+    statePtr->regResult[Rd].reorderNum = reorderNum;
+  }
+  else if (opcode(instr) == SW)
+  {
+    sta->exTimeLeft = STEXEC;
+    sta->reorderNum = reorderNum;
+    Rj = field0(instr);
+    fixVj(sta, statePtr, Rj);
+
+    Rk = field1(instr);
+    fixVk(sta, statePtr, Rk);
+    // rob->storeAddress = immediate(instr); //??我的理解正确吗？
+  }
+  else if (opcode(instr) == BEQZ)
+  {
+    sta->exTimeLeft = BRANCHEXEC;
+    sta->reorderNum = reorderNum;
+    Rj = field0(instr);
+    fixVj(sta, statePtr, Rj);
+    sta->Vk = statePtr->pc + 1;
+    sta->Qk = 0;
+  }
+  else if (opcode(instr) == J)
+  {
+    sta->exTimeLeft = INTEXEC;
+    sta->reorderNum = reorderNum;
+    sta->Vj = 0;
+    sta->Qj = 0;
+    sta->Vk = statePtr->pc + 1;
+    sta->Qk = 0;
+  }
+  else if (opcode(instr) == HALT)
+  {
+    sta->exTimeLeft = INTEXEC;
+    sta->reorderNum = reorderNum;
+    sta->Qj = 0;
+    sta->Qk = 0;
+  }
+  else if (opcode(instr) == NOOP)
+  {
+    sta->exTimeLeft = INTEXEC;
+    sta->reorderNum = reorderNum;
+    sta->Qj = 0;
+    sta->Qk = 0;
+  }
+  else
+  {
+    printf("invalid instruction %d\n", instr);
+    exit(0);
+  }
+  statePtr->pc += 1;
 }
 
 int checkReorder(machineState *statePtr, int *headRB, int *tailRB)
-{
+{//?
   /*
-   * [TODO]
+   * []
    * 在ROB的队尾检查是否有空闲的空间, 如果有, 返回空闲项目的编号.
    * ROB是一个循环队列, 它可以容纳RBSIZE个项目.
    * 新的指令被添加到队列的末尾, 指令提交则是从队首进行的.
    * 当队列的首指针或尾指针到达数组中的最后一项时, 它应滚动到数组的第一项.
    */
+  if((*tailRB + 1) % RBSIZE != *headRB || !statePtr->reorderBuf[(*tailRB + 1) % RBSIZE].busy){
+    *tailRB += 1;
+    return (*tailRB);
+  }else{
+    return -1;
+  }
 }
 
 int getResult(resStation rStation, machineState *statePtr)
@@ -435,55 +586,92 @@ int getResult(resStation rStation, machineState *statePtr)
 
   op = opcode(rStation.instr);
   immed = immediate(rStation.instr);
+  address = jumpAddr(rStation.instr);
 
   switch (op)
   {
   case ANDI:
     return (rStation.Vj & immed);
     break;
-  /* case .... */
+  case ADDI:
+    return (rStation.Vj + immed);
+    break;
+  case regRegALU:
+    function = func(rStation.instr);
+    switch (function)
+    {
+    case addFunc:
+      return (rStation.Vj + rStation.Vk);
+      break;
+    case subFunc:
+      return (rStation.Vj - rStation.Vk);
+      break;
+    case andFunc:
+      return (rStation.Vj & rStation.Vk);
+    default:
+      return 0;
+      break;
+    }
+    break;
+  case LW:
+    return statePtr->memory[rStation.Vj + immed];//RAW冲突怎么解决？ 
+    break;
+  case SW:
+    statePtr->reorderBuf[rStation.reorderNum].storeAddress = rStation.Vj + immed;
+    return rStation.Vk;
+    break;
+  case BEQZ:
+    if(rStation.Vj == 0)
+      return (rStation.Vk + immed);
+    else
+      return -1;
+    break;
+  case J:
+    return (rStation.Vk + address);
+    break;
   default:
+    return 0;
     break;
   }
 }
 
-/* 选作内容 */
-int getPrediction(machineState *statePtr)
-{
-  /*
-   * [TOD]
-   * 对给定的PC, 检查分支预测缓冲栈中是否有历史记录
-   * 如果有, 返回根据历史信息进行的预测, 否则返回-1
-   */
-}
+// /* 选作内容 */
+// int getPrediction(machineState *statePtr)
+// {
+//   /*
+//    * [TOD]
+//    * 对给定的PC, 检查分支预测缓冲栈中是否有历史记录
+//    * 如果有, 返回根据历史信息进行的预测, 否则返回-1
+//    */
+// }
 
-/* 选作内容 */
-void updateBTB(machineState *statePtr, int branchPC, int targetPC, int outcome)
-{
-  /*
-   * [TOD]
-   * 更新分支预测缓冲栈: 检查是否与缓冲栈中的项目匹配.
-   * 如果是, 对2-bit的历史记录进行更新;
-   * 如果不是, 将当前的分支语句添加到缓冲栈中去.
-   * 如果缓冲栈已满，你需要选择一种替换算法将旧的记录替换出去.
-   * 如果当前跳转成功, 将初始的历史状态设置为STRONGTAKEN;
-   * 如果不成功, 将历史设置为STRONGNOT
-   */
-}
+// /* 选作内容 */
+// void updateBTB(machineState *statePtr, int branchPC, int targetPC, int outcome)
+// {
+//   /*
+//    * [TOD]
+//    * 更新分支预测缓冲栈: 检查是否与缓冲栈中的项目匹配.
+//    * 如果是, 对2-bit的历史记录进行更新;
+//    * 如果不是, 将当前的分支语句添加到缓冲栈中去.
+//    * 如果缓冲栈已满，你需要选择一种替换算法将旧的记录替换出去.
+//    * 如果当前跳转成功, 将初始的历史状态设置为STRONGTAKEN;
+//    * 如果不成功, 将历史设置为STRONGNOT
+//    */
+// }
 
-/* 选作内容 */
-int getTarget(machineState *statePtr, int reorderNum)
-{
-  /*
-   * [TOD]
-   * 检查分支指令是否已保存在分支预测缓冲栈中:
-   * 如果不是, 返回当前pc+1, 这意味着我们预测分支跳转不会成功;
-   * 如果在, 并且历史信息为STRONGTAKEN或WEAKTAKEN, 返回跳转的目标地址,
-   * 如果历史信息为STRONGNOT或WEAKNOT, 返回当前pc+1.
-   */
-}
+// /* 选作内容 */
+// int getTarget(machineState *statePtr, int reorderNum)
+// {
+//   /*
+//    * [TOD]
+//    * 检查分支指令是否已保存在分支预测缓冲栈中:
+//    * 如果不是, 返回当前pc+1, 这意味着我们预测分支跳转不会成功;
+//    * 如果在, 并且历史信息为STRONGTAKEN或WEAKTAKEN, 返回跳转的目标地址,
+//    * 如果历史信息为STRONGNOT或WEAKNOT, 返回当前pc+1.
+//    */
+// }
 
-main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
   FILE *filePtr;
   int pc, done, instr, i;
@@ -573,7 +761,7 @@ main(int argc, char *argv[])
     statePtr->reorderBuf[i].busy = 0;
   }
 
-  headRB = -1;
+  headRB = 0;
   tailRB = -1;
 
   for (i = 0; i < NUMREGS; i++)
@@ -595,7 +783,7 @@ main(int argc, char *argv[])
     printState(statePtr, memorySize);
 
     /*
-     * [TODO]
+     * []
      * 基本要求:
      * 首先, 确定是否需要清空流水线或提交位于ROB的队首的指令.
      * 我们处理分支跳转的缺省方法是假设跳转不成功, 如果我们的预测是错误的,
@@ -605,6 +793,60 @@ main(int argc, char *argv[])
      *     对内存写操作, 修改内存.
      * 在完成清空或提交操作后, 不要忘了释放保留栈并更新队列的首指针.
      */
+    reorderEntry* rob = &statePtr->reorderBuf[headRB];
+    if(rob->busy && rob->valid){
+      rob->busy = 0;
+      if(opcode(rob->instr) == BEQZ){
+        if(rob->result != -1){
+          for(int i = 0; i < NUMUNITS; i++){
+            statePtr->reservation[i].busy = 0;
+          }
+          for(int i = 0; i < RBSIZE; i++){
+            statePtr->reorderBuf[i].busy = 0;
+          }
+          for(int i = 0; i < NUMREGS; i++){
+            statePtr->regResult[i].valid = 1;
+          }
+          statePtr->pc = rob->result;
+          headRB = 0;//?
+          tailRB = -1;
+        }else{
+          headRB = (headRB + 1) % RBSIZE;
+        }
+      }else if(opcode(rob->instr) == J){
+        for(int i = 0; i < NUMUNITS; i++){
+          statePtr->reservation[i].busy = 0;
+        }
+        for(int i = 0; i < RBSIZE; i++){
+          statePtr->reorderBuf[i].busy = 0;
+        }
+        for(int i = 0; i < NUMREGS; i++){
+          statePtr->regResult[i].valid = 1;
+        }
+        statePtr->pc = rob->result;
+        headRB = 0;//?
+        tailRB = -1;
+      }else if(opcode(rob->instr) == HALT){
+        break;
+      }else {
+        if(opcode(rob->instr) == SW){
+          statePtr->memory[rob->storeAddress] = rob->result;
+        }else if(opcode(rob->instr) == LW || opcode(rob->instr) == ADDI || opcode(rob->instr) == ANDI){
+          int rd = field1(rob->instr);
+          if(statePtr->regResult[rd].reorderNum == headRB){
+            statePtr->regFile[rd] = rob->result;
+            statePtr->regResult[rd].valid = 1;
+          }
+        }else if(opcode(rob->instr) == regRegALU){
+          int rd = field2(rob->instr);
+          if(statePtr->regResult[rd].reorderNum == headRB){
+            statePtr->regFile[rd] = rob->result;
+            statePtr->regResult[rd].valid = 1;
+          }
+        }
+        headRB = (headRB + 1) % RBSIZE;
+      }
+    }
 
     /*
      * [TOD]
@@ -623,38 +865,122 @@ main(int argc, char *argv[])
      */
 
     /*
-     * [TODO]
+     * []
      * 提交完成.
      * 检查所有保留栈中的指令, 对下列状态, 分别完成所需的操作:
      */
 
     /*
-     * [TODO]
-     * 对Writing Result状态:
-     * 将结果复制到正在等待该结果的其他保留栈中去;
-     * 还需要将结果保存在ROB中的临时存储区中.
-     * 释放指令占用的保留栈, 将指令状态修改为Committing
-     */
-
+    * []
+    * 对Writing Result状态:
+    * 将结果复制到正在等待该结果的其他保留栈中去;
+    * 还需要将结果保存在ROB中的临时存储区中.
+    * 释放指令占用的保留栈, 将指令状态修改为Committing
+    */
+    for(int i = 0; i < NUMUNITS; i++){
+      resStation* sta = &statePtr->reservation[i];
+      if(sta->busy == 0)continue;
+      reorderEntry* reo = &statePtr->reorderBuf[sta->reorderNum];
+      if(reo->instrStatus == WRITINGRESULT){
+        int result = getResult(*sta, statePtr);
+        updateRes(i, statePtr, result);
+        reo->result = result;
+        reo->instrStatus = COMMITTING;
+        reo->valid = 1;
+        sta->busy = 0;
+      }
+    }
     /*
-     * [TODO]
+     * []
      * 对Executing状态:
      * 执行剩余时间递减;
      * 在执行完成时, 将指令状态修改为Writing Result
      */
+    for(int i = 0; i < NUMUNITS; i++){
+      resStation* sta = &statePtr->reservation[i];
+      if(sta->busy == 0)continue;
+      reorderEntry* reo = &statePtr->reorderBuf[sta->reorderNum];
+      if(reo->instrStatus == EXECUTING){
+        sta->exTimeLeft -= 1;
+        if(sta->exTimeLeft == 0){
+          reo->instrStatus = WRITINGRESULT;
+        }
+      }
+    }
 
     /*
-     * [TODO]
+     * []
      * 对Issuing状态:
      * 检查两个操作数是否都已经准备好, 如果是, 将指令状态修改为Executing
      */
+    for(int i = 0; i < NUMUNITS; i++){
+      resStation* sta = &statePtr->reservation[i];
+      if(sta->busy == 0)continue;
+      reorderEntry* reo = &statePtr->reorderBuf[sta->reorderNum];
+      if(reo->instrStatus == ISSUING){
+        if(sta->Qk == 0 && sta->Qj == 0){
+          reo->instrStatus = EXECUTING;
+        }
+      }
+    }
 
     /*
-     * [TODO]
+     * []
      * 最后, 当我们处理完了保留栈中的所有指令后, 检查是否能够发射一条新的指令.
      * 首先检查是否有空闲的保留栈, 如果有, 再检查ROB中是否有空闲的空间,
      * 如果也能找到空闲空间, 发射指令.
      */
+    int instr = statePtr->memory[statePtr->pc];
+    switch (opcode(instr))
+    {
+    case regRegALU:
+    case ADDI:
+    case ANDI:
+    case HALT:
+    case NOOP:
+    case BEQZ:
+    case J:
+      if(statePtr->reservation[INT1 - 1].busy == 0){
+        int reo;
+        if((reo = checkReorder(statePtr, &headRB, &tailRB)) != -1){
+          issueInstr(instr, INT1 - 1, statePtr, reo);
+        }
+      }else if(statePtr->reservation[INT2 - 1].busy == 0){
+        int reo;
+        if((reo = checkReorder(statePtr, &headRB, &tailRB)) != -1){
+          issueInstr(instr, INT2 - 1, statePtr, reo);
+        }
+      }
+      break;
+    case LW:
+      if(statePtr->reservation[LOAD1 - 1].busy == 0){
+        int reo;
+        if((reo = checkReorder(statePtr, &headRB, &tailRB)) != -1){
+          issueInstr(instr, LOAD1 - 1, statePtr, reo);
+        }
+      }else if(statePtr->reservation[LOAD2 - 1].busy == 0){
+        int reo;
+        if((reo = checkReorder(statePtr, &headRB, &tailRB)) != -1){
+          issueInstr(instr, LOAD2 - 1, statePtr, reo);
+        }
+      }
+      break;
+    case SW:
+      if(statePtr->reservation[STORE1 - 1].busy == 0){
+        int reo;
+        if((reo = checkReorder(statePtr, &headRB, &tailRB)) != -1){
+          issueInstr(instr, STORE1 - 1, statePtr, reo);
+        }
+      }else if(statePtr->reservation[STORE2 - 1].busy == 0){
+        int reo;
+        if((reo = checkReorder(statePtr, &headRB, &tailRB)) != -1){
+          issueInstr(instr, STORE2 - 1, statePtr, reo);
+        }
+      }
+      break;
+    default:
+      break;
+    }
 
     /*
      * [TOD]
@@ -664,10 +990,18 @@ main(int argc, char *argv[])
      */
 
     /*
-     * [TODO]
+     * []
      * 周期计数加1
      */
+    statePtr->cycles += 1;
 
+    //debug
+    // if (statePtr->cycles > 20)
+    // {
+    //   break;
+    //   /* code */
+    // }
+    
   } /* while (1) */
   printf("halting machine\n");
 }
